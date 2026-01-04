@@ -1,0 +1,10 @@
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+pypdf>=3.0.0
+python-dotenv>=1.0.0
+# For STEP/STP file volume extraction
+# Note: pythonocc-core can be difficult to install. Use conda if pip fails:
+#   conda install -c conda-forge pythonocc-core
+pythonocc-core>=7.7.0
+
