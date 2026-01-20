@@ -1,0 +1,12 @@
+node_modules
+__pycache__
+*.pyc
+.env
+.venv
+.git
+.next
+backend/uploads/*
+!backend/uploads/.gitkeep
+*.log
+
+

@@ -3,8 +3,16 @@ uvicorn[standard]>=0.24.0
 pydantic>=2.0.0
 pypdf>=3.0.0
 python-dotenv>=1.0.0
-# For STEP/STP file volume extraction
-# Note: pythonocc-core can be difficult to install. Use conda if pip fails:
-#   conda install -c conda-forge pythonocc-core
-pythonocc-core>=7.7.0
+python-multipart>=0.0.6
 
+# For OCR (reading text from scanned PDF drawings)
+# These are optional - the app will work without them but won't read scanned PDFs
+pdf2image>=1.16.3
+pytesseract>=0.3.10
+pillow>=10.0.0
+
+# For STEP/STP file volume extraction (OPTIONAL - NOT REQUIRED FOR PDF READING)
+# This package is difficult to install via pip and is not needed for PDF functionality
+# If you need it, use conda:
+#   conda install -c conda-forge pythonocc-core
+# pythonocc-core>=7.7.0

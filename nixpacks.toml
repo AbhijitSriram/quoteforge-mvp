@@ -1,0 +1,15 @@
+# Nixpacks configuration for Railway deployment
+# This ensures OCR dependencies (Tesseract, Poppler) are installed
+
+[phases.setup]
+nixPkgs = ["tesseract", "poppler_utils"]
+
+[phases.install]
+cmds = [
+  "pip install --upgrade pip",
+  "pip install -r backend/requirements.txt"
+]
+
+[start]
+cmd = "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
+

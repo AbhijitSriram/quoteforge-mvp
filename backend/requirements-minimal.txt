@@ -1,0 +1,10 @@
+# Minimal requirements - only what's needed for basic PDF reading and quote generation
+# This excludes optional OCR and STEP file support
+
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+pypdf>=3.0.0
+python-dotenv>=1.0.0
+
+
