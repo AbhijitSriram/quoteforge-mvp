@@ -1,5 +1,6 @@
 # backend/main.py
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import Optional, Any, Dict
@@ -13,10 +14,33 @@ from pypdf import PdfReader
 try:
     from pdf2image import convert_from_path
     import pytesseract
-    OCR_AVAILABLE = True
-except ImportError:
+    
+    # Try to configure tesseract path (needed on some systems)
+    # On Railway/Nixpacks, tesseract should be in PATH, but try common locations
+    tesseract_cmd = shutil.which("tesseract")
+    if tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+        print(f"Tesseract found at: {tesseract_cmd}")
+    else:
+        # Try common installation paths
+        for path in ["/usr/bin/tesseract", "/usr/local/bin/tesseract"]:
+            if os.path.exists(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                print(f"Tesseract found at: {path}")
+                break
+    
+    # Test if tesseract is actually working
+    try:
+        pytesseract.get_tesseract_version()
+        OCR_AVAILABLE = True
+        print("OCR is available and working")
+    except Exception as e:
+        print(f"Tesseract found but not working: {e}")
+        OCR_AVAILABLE = False
+except ImportError as e:
     OCR_AVAILABLE = False
-    print("Warning: OCR libraries not available. Install pdf2image and pytesseract for scanned PDF support.")
+    print(f"Warning: OCR libraries not available: {e}")
+    print("Install with: pip install pdf2image pytesseract && system package manager for tesseract/poppler")
 
 from knowledge_store import query_chunks
 from quote_engine import compute_estimate, extract_signals_from_text
@@ -63,51 +87,44 @@ def extract_text_from_pdf(pdf_path: Path) -> tuple[str, str]:
     """
     Extract all text from a PDF file.
     First tries direct text extraction, then falls back to OCR for scanned images.
+    For technical drawings, always attempts OCR since dimensions are often graphics.
     Returns tuple: (extracted_text, extraction_method)
     where extraction_method is one of: "direct", "ocr", or "none"
     """
-    all_text = []
+    direct_text = []
     
     # Step 1: Try direct text extraction first (faster, more accurate)
     try:
         reader = PdfReader(str(pdf_path))
-        extracted_any_text = False
         text_length = 0
         
         for page in reader.pages:
             try:
                 page_text = page.extract_text() or ""
                 if page_text.strip():
-                    all_text.append(page_text)
-                    extracted_any_text = True
+                    direct_text.append(page_text)
                     text_length += len(page_text.strip())
             except Exception as e:
-                # Skip pages that can't be extracted
+                print(f"Error extracting text from page: {e}")
                 continue
         
-        # If we got substantial text (more than just a watermark), return it
-        # Otherwise, we'll try OCR as the text might be graphics-based (like dimension numbers)
-        if extracted_any_text and text_length > 200:  # Threshold: more than just a watermark
-            full_text = " ".join(all_text)
-            full_text = " ".join(full_text.split())  # Normalize whitespace
-            return full_text, "direct"
-        elif extracted_any_text:
-            # We got some text but it's minimal - might be a watermark, try OCR anyway
-            # Store what we have as fallback
-            pass  # Will fall through to OCR
+        print(f"Direct extraction: {text_length} characters from {len(direct_text)} pages")
     except Exception as e:
-        # PDF reading failed, will try OCR
-        pass
+        print(f"PDF reading failed: {e}")
+        direct_text = []
     
-    # Step 2: Try OCR (for scanned PDFs/drawings or when minimal text extracted)
-    # OCR is needed when dimensions are embedded as graphics/fonts rather than searchable text
+    # Step 2: Always try OCR for technical drawings
+    # Technical drawings often have dimensions as graphics, not searchable text
+    # Even if direct extraction found some text, OCR might find more (especially numbers)
     ocr_text = []
     if OCR_AVAILABLE:
         try:
+            print(f"Attempting OCR extraction (OCR_AVAILABLE={OCR_AVAILABLE})...")
             # Convert PDF pages to images with higher DPI for better OCR accuracy
             images = convert_from_path(str(pdf_path), dpi=400)
+            print(f"Converted PDF to {len(images)} images for OCR")
             
-            for image in images:
+            for page_num, image in enumerate(images):
                 try:
                     # Configure Tesseract for better results with technical drawings
                     # PSM 11: Sparse text (better for drawings with scattered numbers/dimensions)
@@ -131,48 +148,65 @@ def extract_text_from_pdf(pdf_path: Path) -> tuple[str, str]:
                             if page_text.strip() and len(page_text.strip()) > best_length:
                                 best_text = page_text
                                 best_length = len(page_text.strip())
-                                print(f"OCR extracted {len(page_text)} chars with config: {config or 'default'}")
+                                print(f"Page {page_num+1}: OCR extracted {len(page_text)} chars with config: {config[:50] or 'default'}")
                         except Exception as config_error:
-                            print(f"OCR config {config} failed: {config_error}, trying next...")
+                            print(f"Page {page_num+1}: OCR config failed: {config_error}, trying next...")
                             continue
                     
                     if best_text.strip():
                         ocr_text.append(best_text)
-                        print(f"Using best OCR result: {best_length} characters")
+                        print(f"Page {page_num+1}: Using best OCR result: {best_length} characters")
                     else:
-                        print("OCR produced no text for this page")
+                        print(f"Page {page_num+1}: OCR produced no text")
                 except Exception as e:
-                    print(f"OCR error on page: {e}")
+                    print(f"OCR error on page {page_num+1}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
         except Exception as e:
             # OCR failed (might not have tesseract installed, or pdf2image issues)
-            print(f"OCR extraction failed (is tesseract installed?): {e}")
+            print(f"OCR extraction failed: {e}")
             import traceback
             traceback.print_exc()
             
             # Check if OCR libraries are actually installed
             if not OCR_AVAILABLE:
                 print("WARNING: OCR libraries not available. Install with: pip install pdf2image pytesseract && brew install tesseract poppler")
+    else:
+        print("WARNING: OCR not available. Install pdf2image, pytesseract, tesseract, and poppler for scanned PDF support.")
     
     # Combine direct extraction and OCR text
-    # Prefer OCR if it gives us more text (dimensions are often graphics)
-    combined_text = " ".join(all_text) if all_text else ""
+    # For technical drawings, OCR often finds dimensions that direct extraction misses
+    combined_direct = " ".join(direct_text) if direct_text else ""
     ocr_combined = " ".join(ocr_text) if ocr_text else ""
     
-    if ocr_combined and len(ocr_combined) > len(combined_text):
-        # OCR gave us more text, use it
-        full_text = " ".join(ocr_combined.split())  # Normalize whitespace
-        return full_text, "ocr"
-    elif ocr_combined:
-        # OCR gave us some text, combine with direct extraction
-        full_text = " ".join((combined_text + " " + ocr_combined).split())
-        return full_text, "ocr"
-    elif combined_text:
-        # Only direct extraction worked
-        full_text = " ".join(combined_text.split())  # Normalize whitespace
+    print(f"Text summary: direct={len(combined_direct)} chars, OCR={len(ocr_combined)} chars")
+    
+    # Strategy: Always prefer OCR for technical drawings since dimensions are often graphics
+    # But also combine with direct extraction to get any metadata/text that OCR might miss
+    if ocr_combined:
+        # OCR found text - use it (prefer OCR for dimensions)
+        if combined_direct:
+            # Combine both for maximum coverage (direct might have metadata, OCR has dimensions)
+            full_text = " ".join((combined_direct + " " + ocr_combined).split())
+            print(f"Using combined direct+OCR: {len(full_text)} chars (direct={len(combined_direct)}, OCR={len(ocr_combined)})")
+            return full_text, "ocr"
+        else:
+            # Only OCR worked
+            full_text = " ".join(ocr_combined.split())  # Normalize whitespace
+            print(f"Using OCR only: {len(full_text)} chars")
+            return full_text, "ocr"
+    elif combined_direct:
+        # Only direct extraction worked (OCR failed or not available)
+        full_text = " ".join(combined_direct.split())  # Normalize whitespace
+        print(f"Using direct only: {len(full_text)} chars (OCR not available or failed)")
         return full_text, "direct"
     
     # No text found via either method
+    print("WARNING: No text extracted from PDF via direct extraction or OCR")
+    print(f"  - Direct extraction: {len(direct_text)} pages processed")
+    print(f"  - OCR available: {OCR_AVAILABLE}")
+    print(f"  - OCR text pages: {len(ocr_text)}")
     return "", "none"
 
 
@@ -191,10 +225,26 @@ class AskRequest(BaseModel):
 
 @app.get("/health")
 def health():
+    ocr_status = "unknown"
+    tesseract_path = "not found"
+    if OCR_AVAILABLE:
+        try:
+            import pytesseract
+            tesseract_path = pytesseract.pytesseract.tesseract_cmd or "not configured"
+            version = pytesseract.get_tesseract_version()
+            ocr_status = f"available (version: {version})"
+        except Exception as e:
+            ocr_status = f"error: {e}"
+    else:
+        ocr_status = "not available"
+    
     return {
         "status": "ok",
         "db_path": str(DB_PATH),
         "db_exists": DB_PATH.exists(),
+        "ocr_available": OCR_AVAILABLE,
+        "ocr_status": ocr_status,
+        "tesseract_path": tesseract_path,
     }
 
 
@@ -338,13 +388,31 @@ async def quote(
     # 6) Run estimate engine
     estimate = compute_estimate(signals)
 
+    # Get OCR diagnostic info
+    ocr_diagnostic = {
+        "available": OCR_AVAILABLE,
+        "status": "unknown"
+    }
+    if OCR_AVAILABLE:
+        try:
+            import pytesseract
+            ocr_diagnostic["tesseract_path"] = pytesseract.pytesseract.tesseract_cmd or "not configured"
+            ocr_diagnostic["status"] = "working"
+        except Exception as e:
+            ocr_diagnostic["status"] = f"error: {str(e)}"
+    else:
+        ocr_diagnostic["status"] = "not available"
+    
     return {
         "quote_id": None,
         "uploaded_file": file.filename,
         "pdf_text_extracted": len(pdf_text) > 0,
         "extraction_method": extraction_method,
         "ocr_available": OCR_AVAILABLE,
+        "ocr_diagnostic": ocr_diagnostic,
+        "pdf_text_length": len(pdf_text),
         "pdf_text_preview": pdf_text[:500] if pdf_text else "",
+        "raw_text_preview": pdf_text[:500] if pdf_text else "",  # Alias for frontend compatibility
         "signals": signals,
         "references": [
             {
