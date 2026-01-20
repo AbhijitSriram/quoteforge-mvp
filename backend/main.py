@@ -43,7 +43,7 @@ DB_PATH = Path(os.getenv("KNOWLEDGE_DB_PATH", str(DEFAULT_DB))).expanduser().res
 # CORS origins - add your production frontend URL here
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000"
+    "http://localhost:3000,http://127.0.0.1:3000,https://quoteforge-mvp.vercel.app"
 ).split(",")
 
 app.add_middleware(
